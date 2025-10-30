@@ -1,19 +1,34 @@
-# run.py (упрощенный)
-import os
-import sys
+# run.py
 import asyncio
-from bot import main
+import logging
+from bot import main as telegram_main
+from vk_bot import VKBot
+from utils.logger import setup_logger
 
-if __name__ == "__main__":
-    # Проверяем наличие .env файла
-    if not os.path.exists('.env'):
-        print("❌ Файл .env не найден!")
-        sys.exit(1)
+
+async def run_all_bots():
+    """Запуск всех ботов"""
+    setup_logger()
+    logger = logging.getLogger(__name__)
+
+    logger.info("🚀 Запуск мульти-платформенного бота Lab&Code...")
 
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("🛑 Бот остановлен")
+        # Запускаем Telegram бота в отдельной задаче
+        telegram_task = asyncio.create_task(telegram_main())
+
+        # Запускаем VK бота (если настроен)
+        from config import VK_GROUP_TOKEN
+        if VK_GROUP_TOKEN:
+            vk_bot = VKBot()
+            vk_task = asyncio.create_task(vk_bot.run())
+            await asyncio.gather(telegram_task, vk_task)
+        else:
+            await telegram_task
+
     except Exception as e:
-        print(f"💥 Критическая ошибка: {e}")
-        sys.exit(1)
+        logger.error(f"❌ Ошибка при запуске ботов: {e}")
+
+
+if __name__ == "__main__":
+    asyncio.run(run_all_bots())
