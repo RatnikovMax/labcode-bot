@@ -3,37 +3,17 @@ import logging
 import os
 from logging.handlers import TimedRotatingFileHandler
 import glob
-import time
-
-
-class CustomFormatter(logging.Formatter):
-    """Кастомный форматтер для единообразного вывода логов"""
-
-    def format(self, record):
-        # Сохраняем оригинальное сообщение
-        original_message = record.getMessage()
-
-        # Если это наше кастомное сообщение (не из aiogram), форматируем его
-        if (not original_message.startswith('Update id=') and
-                not original_message.startswith('Start polling') and
-                not original_message.startswith('Run polling') and
-                'aiogram' not in record.name):
-            # Форматируем в стиле aiogram
-            record.msg = f"{original_message}"
-
-        return super().format(record)
+import tempfile
 
 
 def setup_logger():
-    """Настройка логгера с ротацией раз в неделю"""
+    """Настройка логгера с записью во временную директорию"""
 
-    # Создаем папку для логов если ее нет
-    log_dir = "logs"
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+    # Используем временную директорию
+    log_dir = tempfile.gettempdir()
 
     # Основной форматтер
-    formatter = CustomFormatter(
+    formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
@@ -42,12 +22,13 @@ def setup_logger():
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
 
-    # Файловый обработчик с ротацией по понедельникам
+    # Файловый обработчик во временную директорию
+    log_file = os.path.join(log_dir, 'bot.log')
     file_handler = TimedRotatingFileHandler(
-        filename=os.path.join(log_dir, 'bot.log'),
-        when='W0',  # Ротация в понедельник
-        interval=1,  # Каждую неделю
-        backupCount=4,  # Хранить 4 файла (1 месяц)
+        filename=log_file,
+        when='W0',
+        interval=1,
+        backupCount=4,
         encoding='utf-8'
     )
     file_handler.setFormatter(formatter)
@@ -63,26 +44,6 @@ def setup_logger():
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
 
-    # Настраиваем логгер для нашего приложения
-    app_logger = logging.getLogger('app')
-    app_logger.setLevel(logging.INFO)
-    app_logger.propagate = True  # Пропускаем логи в основной логгер
-
-    logging.info("✅ Логгер настроен с ротацией раз в неделю")
+    logging.info(f"✅ Логгер настроен. Логи в: {log_file}")
 
     return logger
-
-
-def cleanup_old_logs(log_dir="logs", days=30):
-    """Очистка старых лог-файлов (старше 30 дней)"""
-    try:
-        current_time = time.time()
-
-        for log_file in glob.glob(os.path.join(log_dir, "*.log*")):
-            # Удаляем файлы старше days дней
-            if os.path.getctime(log_file) < current_time - (days * 86400):
-                os.remove(log_file)
-                logging.info(f"🗑️ Удален старый лог-файл: {log_file}")
-
-    except Exception as e:
-        logging.error(f"❌ Ошибка при очистке логов: {e}")

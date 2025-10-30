@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем весь проект
 COPY . .
 
-# Создание пользователя для безопасности (ПОСЛЕ установки зависимостей)
+# Создание пользователя и настройка прав
 RUN useradd -m -u 1000 botuser && \
     mkdir -p /app/logs && \
     chown -R botuser:botuser /app
@@ -23,4 +23,4 @@ RUN useradd -m -u 1000 botuser && \
 # Смена пользователя
 USER botuser
 
-CMD ["python", "run.py"]
+CMD ["python", "bot.py"]
