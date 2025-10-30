@@ -1,3 +1,4 @@
+# run.py (упрощенный)
 import os
 import sys
 import asyncio
@@ -7,7 +8,6 @@ if __name__ == "__main__":
     # Проверяем наличие .env файла
     if not os.path.exists('.env'):
         print("❌ Файл .env не найден!")
-        print("Скопируйте .env.example в .env и настройте переменные")
         sys.exit(1)
 
     try:

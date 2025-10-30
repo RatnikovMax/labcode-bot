@@ -5,7 +5,6 @@ from logging.handlers import TimedRotatingFileHandler
 import glob
 import tempfile
 
-
 def setup_logger():
     """Настройка логгера с записью во временную директорию"""
 
@@ -47,3 +46,7 @@ def setup_logger():
     logging.info(f"✅ Логгер настроен. Логи в: {log_file}")
 
     return logger
+
+def cleanup_old_logs():
+    """Очистка старых лог-файлов (заглушка)"""
+    pass
