@@ -1,0 +1,64 @@
+2025-10-27 14:43:37 - root - INFO - ✅ Логгер настроен с ротацией раз в неделю
+2025-10-27 14:43:37 - auto_messages - INFO - ✅ AutoMessageScheduler инициализирован
+2025-10-27 14:43:37 - auto_messages - INFO - ✅ Бот установлен в AutoMessageScheduler
+2025-10-27 14:43:37 - __main__ - INFO - 🚀 Запуск бота Lab&Code...
+2025-10-27 14:43:37 - __main__ - INFO - ✅ Уведомление о запуске отправлено админу
+2025-10-27 14:43:37 - aiogram.dispatcher - INFO - Start polling
+2025-10-27 14:43:37 - aiogram.dispatcher - INFO - Run polling for bot @Lab_CodeBot id=8357063170 - 'Lab&&Code'
+2025-10-27 14:43:47 - aiogram.event - INFO - Update id=165575339 is handled. Duration 180 ms by bot id=8357063170
+2025-10-27 14:43:49 - aiogram.event - INFO - Update id=165575340 is handled. Duration 137 ms by bot id=8357063170
+2025-10-27 14:43:51 - aiogram.event - INFO - Update id=165575341 is handled. Duration 190 ms by bot id=8357063170
+2025-10-27 14:43:52 - aiogram.event - INFO - Update id=165575342 is handled. Duration 139 ms by bot id=8357063170
+2025-10-27 14:43:53 - aiogram.event - INFO - Update id=165575343 is handled. Duration 135 ms by bot id=8357063170
+2025-10-27 14:43:55 - auto_messages - INFO - ✅ Запланировано 3 автосообщений для пользователя 1121138765
+2025-10-27 14:43:55 - aiogram.event - INFO - Update id=165575344 is handled. Duration 158 ms by bot id=8357063170
+2025-10-27 14:43:58 - aiogram.event - INFO - Update id=165575345 is handled. Duration 276 ms by bot id=8357063170
+2025-10-27 14:44:05 - auto_messages - INFO - ✅ Автосообщение отправлено пользователю 1121138765
+2025-10-27 14:44:15 - auto_messages - INFO - ✅ Автосообщение отправлено пользователю 1121138765
+2025-10-27 14:44:17 - aiogram.dispatcher - INFO - Polling stopped
+2025-10-27 14:44:17 - aiogram.dispatcher - ERROR - Failed to fetch updates - TelegramNetworkError: HTTP Client says - ServerDisconnectedError: Server disconnected
+2025-10-27 14:44:17 - aiogram.dispatcher - WARNING - Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8357063170)
+2025-10-27 14:44:17 - __main__ - INFO - ⏹ Бот остановлен
+2025-10-27 14:44:17 - aiogram.dispatcher - INFO - Polling stopped for bot @Lab_CodeBot id=8357063170 - 'Lab&&Code'
+2025-10-27 14:44:17 - __main__ - INFO - ⏹ Бот остановлен по команде пользователя
+2025-10-27 14:49:10 - root - INFO - ✅ Логгер настроен с ротацией раз в неделю
+2025-10-27 14:49:10 - app - INFO - AutoMessageScheduler инициализирован
+2025-10-27 14:49:10 - app - INFO - Бот установлен в AutoMessageScheduler
+2025-10-27 14:49:10 - __main__ - INFO - 🚀 Запуск бота Lab&Code...
+2025-10-27 14:49:11 - __main__ - INFO - ✅ Уведомление о запуске отправлено админу
+2025-10-27 14:49:11 - aiogram.dispatcher - INFO - Start polling
+2025-10-27 14:49:11 - aiogram.dispatcher - INFO - Run polling for bot @Lab_CodeBot id=8357063170 - 'Lab&&Code'
+2025-10-27 14:49:29 - aiogram.event - INFO - Update id=165575346 is handled. Duration 183 ms by bot id=8357063170
+2025-10-27 14:49:31 - aiogram.event - INFO - Update id=165575347 is handled. Duration 131 ms by bot id=8357063170
+2025-10-27 14:49:33 - aiogram.event - INFO - Update id=165575348 is handled. Duration 135 ms by bot id=8357063170
+2025-10-27 14:49:38 - app - INFO - 📋 Новый запрос от студента:
+👤 Пользователь: @arab4ik326 (ID: 1121138765)
+📝 Тип работы: Лабораторные
+📞 Контакт: 14
+==================================================
+2025-10-27 14:49:38 - app - INFO - Уведомление отправлено админу 1121138765 от пользователя 1121138765
+2025-10-27 14:49:38 - app - INFO - Запланировано 3 автосообщений для пользователя 1121138765
+2025-10-27 14:49:38 - aiogram.event - INFO - Update id=165575349 is handled. Duration 306 ms by bot id=8357063170
+2025-10-27 14:49:42 - aiogram.event - INFO - Update id=165575350 is handled. Duration 155 ms by bot id=8357063170
+2025-10-27 14:49:48 - app - INFO - Автосообщение отправлено пользователю 1121138765
+2025-10-27 14:49:58 - app - INFO - Автосообщение отправлено пользователю 1121138765
+2025-10-27 14:50:08 - app - INFO - Автосообщение отправлено пользователю 1121138765
+2025-10-27 15:11:19 - aiogram.dispatcher - INFO - Polling stopped
+2025-10-27 15:11:19 - aiogram.dispatcher - ERROR - Failed to fetch updates - TelegramNetworkError: HTTP Client says - ServerDisconnectedError: Server disconnected
+2025-10-27 15:11:19 - aiogram.dispatcher - WARNING - Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8357063170)
+2025-10-27 15:11:19 - __main__ - INFO - ⏹ Бот остановлен
+2025-10-27 15:11:19 - aiogram.dispatcher - INFO - Polling stopped for bot @Lab_CodeBot id=8357063170 - 'Lab&&Code'
+2025-10-27 15:11:19 - __main__ - INFO - ⏹ Бот остановлен по команде пользователя
+2025-10-27 15:12:03 - root - INFO - ✅ Логгер настроен с ротацией раз в неделю
+2025-10-27 15:12:04 - app - INFO - AutoMessageScheduler инициализирован
+2025-10-27 15:12:04 - app - INFO - Бот установлен в AutoMessageScheduler
+2025-10-27 15:12:04 - __main__ - INFO - 🚀 Запуск бота Lab&Code...
+2025-10-27 15:12:04 - __main__ - INFO - ✅ Уведомление о запуске отправлено админу
+2025-10-27 15:12:04 - aiogram.dispatcher - INFO - Start polling
+2025-10-27 15:12:04 - aiogram.dispatcher - INFO - Run polling for bot @Lab_CodeBot id=8357063170 - 'Lab&&Code'
+2025-10-27 17:25:47 - aiogram.dispatcher - INFO - Polling stopped
+2025-10-27 17:25:47 - aiogram.dispatcher - ERROR - Failed to fetch updates - TelegramNetworkError: HTTP Client says - ServerDisconnectedError: Server disconnected
+2025-10-27 17:25:47 - aiogram.dispatcher - WARNING - Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8357063170)
+2025-10-27 17:25:47 - __main__ - INFO - ⏹ Бот остановлен
+2025-10-27 17:25:47 - aiogram.dispatcher - INFO - Polling stopped for bot @Lab_CodeBot id=8357063170 - 'Lab&&Code'
+2025-10-27 17:25:47 - __main__ - INFO - ⏹ Бот остановлен по команде пользователя
