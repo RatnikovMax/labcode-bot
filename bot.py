@@ -14,6 +14,17 @@ from utils.auto_messages import AutoMessageScheduler
 from utils.context import set_bot, set_scheduler
 from utils.logger import setup_logger, cleanup_old_logs
 
+import os
+
+# Проверка обязательных переменных
+if not os.getenv('BOT_TOKEN'):
+    print("❌ BOT_TOKEN не установлен!")
+    print("Убедитесь, что переменная BOT_TOKEN передана в окружение")
+    exit(1)
+
+if not os.getenv('ADMIN_ID'):
+    print("⚠️  ADMIN_ID не установлен, уведомления админу отключены")
+
 # Настройка логгера
 setup_logger()
 cleanup_old_logs()

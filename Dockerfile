@@ -1,4 +1,3 @@
-# Dockerfile
 FROM python:3.11-slim
 
 # Установка системных зависимостей
@@ -6,29 +5,22 @@ RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Создание пользователя для безопасности
-RUN useradd -m -u 1000 botuser
-
 # Создание рабочей директории
 WORKDIR /app
 
-# Копирование requirements сначала для кэширования
+# Копируем и устанавливаем зависимости сначала
 COPY requirements.txt .
-
-# Установка Python зависимостей
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Копирование исходного кода
+# Копируем весь проект
 COPY . .
 
-# Создание папки для логов
-RUN mkdir -p /app/logs && chown botuser:botuser /app/logs
+# Создание пользователя для безопасности (ПОСЛЕ установки зависимостей)
+RUN useradd -m -u 1000 botuser && \
+    mkdir -p /app/logs && \
+    chown -R botuser:botuser /app
 
 # Смена пользователя
 USER botuser
 
-# Скрипт запуска
-COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python", "run.py"]
