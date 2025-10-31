@@ -19,10 +19,12 @@ async def run_telegram_bot():
 def run_vk_bot():
     """Запуск VK бота в отдельном потоке"""
     try:
+        logging.info("🔄 Инициализация VK бота...")
         vk_bot = VKBot()
+        logging.info("✅ VK бот инициализирован, запускаем...")
         vk_bot.run()
     except Exception as e:
-        logging.error(f"❌ Ошибка в VK боте: {e}")
+        logging.error(f"❌ Ошибка в VK боте: {e}", exc_info=True)
 
 
 async def main():
@@ -41,10 +43,12 @@ async def main():
         logger.info("✅ Запуск VK бота в отдельном потоке...")
         vk_thread = threading.Thread(target=run_vk_bot, daemon=True)
         vk_thread.start()
+        logger.info(f"✅ VK поток запущен. ID: {vk_thread.ident}, Alive: {vk_thread.is_alive()}")
     else:
         logger.info("❌ VK бот отключен - проверьте настройки")
 
     # Запускаем Telegram бота в основном потоке
+    logger.info("✅ Запуск Telegram бота...")
     await run_telegram_bot()
 
 
