@@ -2,6 +2,8 @@
 import logging
 from aiogram import Bot
 from config import ADMIN_ID, VK_ADMIN_ID
+import vk_api
+from config import VK_GROUP_TOKEN
 
 notification_logger = logging.getLogger('app')
 
@@ -55,6 +57,9 @@ def notify_admin_vk(user_data: dict, contact_info: str, user_id: int):
         return
 
     try:
+        vk_session = vk_api.VkApi(token=VK_GROUP_TOKEN)
+        vk = vk_session.get_api()
+
         if user_data.get('category') == 'student_help':
             message_text = f"""
 📋 НОВЫЙ ЗАПРОС ОТ СТУДЕНТА (VK)
@@ -79,9 +84,12 @@ def notify_admin_vk(user_data: dict, contact_info: str, user_id: int):
 ⚡ Требует быстрого ответа!
             """
 
-        # Здесь будет код для отправки сообщения в VK
-        # Нужно импортировать vk_api и отправить сообщение администратору
-        notification_logger.info(f"VK уведомление для админа {VK_ADMIN_ID}: {message_text}")
+        vk.messages.send(
+            user_id=int(VK_ADMIN_ID),
+            message=message_text,
+            random_id=vk_api.utils.get_random_id()
+        )
+        notification_logger.info(f"VK уведомление отправлено админу {VK_ADMIN_ID}")
 
     except Exception as e:
         notification_logger.error(f"Ошибка отправки VK уведомления админу: {e}")
