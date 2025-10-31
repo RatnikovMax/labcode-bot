@@ -23,4 +23,4 @@ RUN useradd -m -u 1000 botuser && \
 # Смена пользователя
 USER botuser
 
-CMD ["python", "bot.py"]
+CMD ["python", "run.py"]
