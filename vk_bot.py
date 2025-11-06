@@ -6,6 +6,10 @@ from vk_api.keyboard import VkKeyboard, VkKeyboardColor
 import logging
 import json
 from datetime import datetime
+import time
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from config import VK_GROUP_TOKEN, VK_GROUP_ID, VK_ADMIN_ID
 from utils.auto_messages import AutoMessageScheduler
@@ -18,18 +22,65 @@ class VKBot:
     def __init__(self):
         try:
             logger.info("🔄 Создание VK сессии...")
-            self.vk_session = vk_api.VkApi(token=VK_GROUP_TOKEN)
+
+            # Создаем сессию с повторными попытками
+            session = requests.Session()
+
+            # Настраиваем стратегию повторных попыток
+            retry_strategy = Retry(
+                total=5,
+                backoff_factor=1,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["GET", "POST"]
+            )
+
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+
+            self.vk_session = vk_api.VkApi(token=VK_GROUP_TOKEN, session=session)
+
             logger.info("🔄 Инициализация LongPoll...")
             self.longpoll = VkBotLongPoll(self.vk_session, int(VK_GROUP_ID))
+
             logger.info("🔄 Получение VK API...")
             self.vk = self.vk_session.get_api()
+
             self.user_states = {}
             self.user_data = {}
             self.auto_message_scheduler = AutoMessageScheduler()
+
             logger.info("✅ VK бот инициализирован")
+
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации VK бота: {e}", exc_info=True)
             raise
+
+    def run_with_retry(self, max_retries=5, base_delay=5):
+        """Запуск бота с повторными попытками при сетевых ошибках"""
+        retries = 0
+
+        while retries < max_retries:
+            try:
+                logger.info(f"🚀 Попытка запуска VK бота #{retries + 1}")
+                self.run()
+                break  # Если успешно запустился, выходим из цикла
+
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                retries += 1
+                logger.error(f"❌ Сетевая ошибка (попытка {retries}/{max_retries}): {e}")
+
+                if retries < max_retries:
+                    delay = base_delay * (2 ** (retries - 1))  # Экспоненциальная задержка
+                    logger.info(f"⏳ Повтор через {delay} секунд...")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"💥 Превышено максимальное количество попыток. VK бот остановлен.")
+                    raise
+
+            except Exception as e:
+                logger.error(f"💥 Критическая ошибка VK бота: {e}", exc_info=True)
+                raise
 
     def get_keyboard(self, keyboard_type="main_menu"):
         """Создание клавиатур для VK"""
@@ -209,7 +260,7 @@ class VKBot:
         notification += f"📱 Контакт: {contact_info}\n"
         notification += f"⏰ Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
-        # Отправляем уведомление админу - ИСПРАВЛЕННЫЙ ВЫЗОВ
+        # Отправляем уведомление админу
         try:
             from utils.notifications import notify_admin_vk
             notify_admin_vk(user_data, contact_info, user_id)
@@ -309,3 +360,38 @@ class VKBot:
 
         except Exception as e:
             logger.error(f"❌ Ошибка в VK боте: {e}", exc_info=True)
+            raise  # Пробрасываем исключение для обработки в run_with_retry
+
+
+def run_vk_bot_with_restarts():
+    """Запуск VK бота с автоматическими перезапусками"""
+    max_restarts = 10
+    restart_count = 0
+    base_delay = 10
+
+    while restart_count < max_restarts:
+        try:
+            logger.info(f"🔄 Попытка запуска VK бота #{restart_count + 1}")
+            vk_bot = VKBot()
+            vk_bot.run_with_retry(max_retries=5, base_delay=5)
+
+        except Exception as e:
+            restart_count += 1
+            logger.error(f"❌ VK бот упал (попытка {restart_count}/{max_restarts}): {e}")
+
+            if restart_count < max_restarts:
+                delay = min(base_delay * (2 ** (restart_count - 1)), 300)  # Максимум 5 минут
+                logger.info(f"⏳ Перезапуск VK бота через {delay} секунд...")
+                time.sleep(delay)
+            else:
+                logger.error("💥 Превышено максимальное количество перезапусков VK бота")
+                break
+
+
+if __name__ == "__main__":
+    # Прямой запуск для тестирования
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    run_vk_bot_with_restarts()
