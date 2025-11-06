@@ -1,25 +1,15 @@
 services:
-  telegram-bot:
+  labcode-bot:
     build: .
     container_name: labcode-bot
     restart: unless-stopped
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
-    dns_search: .
-    # Убираем extra_hosts - они могут вызывать проблемы
     networks:
-      - labcode-bot_default
+      - labcode-network
     env_file:
       - .env
-    # Добавляем healthcheck
-    healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('https://api.vk.com/', timeout=5) || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
 networks:
-  labcode-bot_default:
+  labcode-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

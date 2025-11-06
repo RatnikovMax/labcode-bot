@@ -1,7 +1,8 @@
-# run.py
+# run.py (обновленная версия)
 import asyncio
 import logging
 import threading
+import time
 from bot import main as telegram_main
 from vk_bot import VKBot
 from utils.logger import setup_logger
@@ -17,14 +18,28 @@ async def run_telegram_bot():
 
 
 def run_vk_bot():
-    """Запуск VK бота в отдельном потоке"""
-    try:
-        logging.info("🔄 Инициализация VK бота...")
-        vk_bot = VKBot()
-        logging.info("✅ VK бот инициализирован, запускаем...")
-        vk_bot.run()
-    except Exception as e:
-        logging.error(f"❌ Ошибка в VK боте: {e}", exc_info=True)
+    """Запуск VK бота в отдельном потоке с обработкой ошибок"""
+    max_restarts = 10
+    restart_count = 0
+    base_delay = 10
+
+    while restart_count < max_restarts:
+        try:
+            logging.info(f"🔄 Попытка запуска VK бота #{restart_count + 1}")
+            vk_bot = VKBot()
+            vk_bot.run_with_retry(max_retries=5, base_delay=5)
+
+        except Exception as e:
+            restart_count += 1
+            logging.error(f"❌ VK бот упал (попытка {restart_count}/{max_restarts}): {e}")
+
+            if restart_count < max_restarts:
+                delay = min(base_delay * (2 ** (restart_count - 1)), 300)  # Максимум 5 минут
+                logging.info(f"⏳ Перезапуск VK бота через {delay} секунд...")
+                time.sleep(delay)
+            else:
+                logging.error("💥 Превышено максимальное количество перезапусков VK бота")
+                break
 
 
 async def main():

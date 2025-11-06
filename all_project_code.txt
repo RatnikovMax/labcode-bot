@@ -1,0 +1,1507 @@
+СБОРКА КОДА ПРОЕКТА: 
+ВРЕМЯ: 2025-11-06 12:11:57
+====================================================================================================
+
+
+================================================================================
+ФАЙЛ: bot.py
+РАЗМЕР: 3389 байт
+================================================================================
+
+# bot.py
+import asyncio
+import logging
+import os
+from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
+
+from config import BOT_TOKEN
+from handlers.start import router as start_router
+from handlers.student_help import router as student_router
+from handlers.programming import router as programming_router
+from handlers.common import router as common_router
+from utils.auto_messages import AutoMessageScheduler
+from utils.context import set_bot, set_scheduler
+from utils.logger import setup_logger, cleanup_old_logs
+
+import os
+
+# Проверка обязательных переменных
+if not os.getenv('BOT_TOKEN'):
+    print("❌ BOT_TOKEN не установлен!")
+    print("Убедитесь, что переменная BOT_TOKEN передана в окружение")
+    exit(1)
+
+if not os.getenv('ADMIN_ID'):
+    print("⚠️  ADMIN_ID не установлен, уведомления админу отключены")
+
+# Настройка логгера
+setup_logger()
+cleanup_old_logs()
+
+logger = logging.getLogger(__name__)
+
+# Инициализация бота и диспетчера
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
+auto_message_scheduler = AutoMessageScheduler()
+auto_message_scheduler.set_bot(bot)
+
+# Устанавливаем глобальные объекты
+set_bot(bot)
+set_scheduler(auto_message_scheduler)
+
+# Регистрация роутеров
+dp.include_router(start_router)
+dp.include_router(student_router)
+dp.include_router(programming_router)
+dp.include_router(common_router)
+
+
+async def main():
+    logger.info("🚀 Запуск бота Lab&Code в Docker...")
+
+    # Информация о среде выполнения (для отладки)
+    logger.info(f"Python version: {os.sys.version}")
+    logger.info(f"Running in container: {os.path.exists('/.dockerenv')}")
+
+    # Отправляем сообщение админу о запуске бота
+    from config import ADMIN_ID
+    if ADMIN_ID:
+        try:
+            await bot.send_message(
+                ADMIN_ID,
+                "🐳 Бот Lab&Code запущен в Docker и готов к работе!",
+                parse_mode='Markdown'
+            )
+            logger.info("✅ Уведомление о запуске отправлено админу")
+        except Exception as e:
+            logger.error(f"❌ Не удалось отправить уведомление о запуске: {e}")
+
+    try:
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.error(f"❌ Ошибка при запуске бота: {e}")
+        raise
+    finally:
+        # Корректное завершение работы
+        for user_tasks in auto_message_scheduler.scheduled_tasks.values():
+            for task in user_tasks:
+                task.cancel()
+        await bot.session.close()
+        logger.info("⏹ Бот остановлен")
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("⏹ Бот остановлен по команде пользователя")
+    except Exception as e:
+        logger.critical(f"💥 Критическая ошибка: {e}")
+        exit(1)
+
+
+================================================================================
+ФАЙЛ: cleanup_logs.py
+РАЗМЕР: 1355 байт
+================================================================================
+
+# cleanup_logs.py
+"""
+Скрипт для очистки старых лог-файлов
+Запускайте раз в неделю через cron или планировщик задач
+"""
+
+import os
+import glob
+import time
+from datetime import datetime
+
+
+def cleanup_logs(log_dir="logs", keep_days=30):
+    """Очистка лог-файлов старше keep_days дней"""
+
+    if not os.path.exists(log_dir):
+        print(f"📁 Папка {log_dir} не существует")
+        return
+
+    current_time = time.time()
+    deleted_count = 0
+
+    # Ищем все лог-файлы
+    for log_file in glob.glob(os.path.join(log_dir, "*.log*")):
+        file_time = os.path.getctime(log_file)
+
+        # Если файл старше keep_days дней
+        if file_time < current_time - (keep_days * 86400):
+            try:
+                os.remove(log_file)
+                deleted_count += 1
+                print(f"🗑️ Удален: {log_file}")
+            except Exception as e:
+                print(f"❌ Ошибка удаления {log_file}: {e}")
+
+    print(f"✅ Очистка завершена. Удалено файлов: {deleted_count}")
+
+
+if __name__ == "__main__":
+    print(f"🕐 Начало очистки логов: {datetime.now()}")
+    cleanup_logs()
+
+
+================================================================================
+ФАЙЛ: collector.py
+РАЗМЕР: 7020 байт
+================================================================================
+
+import os
+import argparse
+from pathlib import Path
+
+
+class CodeCollector:
+    def __init__(self):
+        self.default_extensions = {
+            'python': ['.py'],
+            'web': ['.html', '.css', '.js', '.jsx', '.ts', '.tsx'],
+            'java': ['.java'],
+            'cpp': ['.cpp', '.c', '.h', '.hpp'],
+            'config': ['.json', '.xml', '.yaml', '.yml'],
+            'docs': ['.md', '.txt', '.rst']
+        }
+
+        self.ignore_dirs = [
+            '__pycache__', '.git', 'venv', 'env', 'node_modules',
+            '.idea', 'build', 'dist', '.vscode', '__pycache__',
+            'target', '.gradle', '.settings', '.venv'
+        ]
+
+        self.ignore_files = [
+            'package-lock.json', 'yarn.lock', '.DS_Store'
+        ]
+
+    def collect_code(self, project_path, output_file, file_types=None, max_file_size=1024 * 1024):
+        """
+        Собирает код проекта в один файл
+
+        Args:
+            project_path (str): Путь к проекту
+            output_file (str): Выходной файл
+            file_types (list): Типы файлов для включения
+            max_file_size (int): Максимальный размер файла для обработки (в байтах)
+        """
+        if file_types is None:
+            file_types = ['python']  # По умолчанию только Python
+
+        # Собираем все расширения из выбранных типов
+        extensions = []
+        for file_type in file_types:
+            if file_type in self.default_extensions:
+                extensions.extend(self.default_extensions[file_type])
+
+        project_path = Path(project_path)
+
+        with open(output_file, 'w', encoding='utf-8') as outfile:
+            # Записываем заголовок
+            outfile.write(f"СБОРКА КОДА ПРОЕКТА: {project_path.name}\n")
+            outfile.write(f"ВРЕМЯ: {self._get_timestamp()}\n")
+            outfile.write("=" * 100 + "\n\n")
+
+            file_count = 0
+            total_size = 0
+
+            for file_path in project_path.rglob('*'):
+                if file_path.is_file():
+                    # Проверяем, нужно ли игнорировать файл
+                    if self._should_ignore(file_path):
+                        continue
+
+                    # Проверяем расширение
+                    if file_path.suffix.lower() not in extensions:
+                        continue
+
+                    # Проверяем размер файла
+                    try:
+                        file_size = file_path.stat().st_size
+                        if file_size > max_file_size:
+                            print(f"Пропущен (слишком большой): {file_path}")
+                            continue
+                    except OSError:
+                        continue
+
+                    try:
+                        # Читаем содержимое файла
+                        with open(file_path, 'r', encoding='utf-8') as infile:
+                            content = infile.read()
+
+                        # Записываем в выходной файл
+                        relative_path = file_path.relative_to(project_path)
+                        outfile.write(f"\n{'=' * 80}\n")
+                        outfile.write(f"ФАЙЛ: {relative_path}\n")
+                        outfile.write(f"РАЗМЕР: {file_size} байт\n")
+                        outfile.write(f"{'=' * 80}\n\n")
+                        outfile.write(content)
+                        outfile.write('\n\n')
+
+                        file_count += 1
+                        total_size += len(content.encode('utf-8'))
+
+                        print(f"✓ Обработан: {relative_path}")
+
+                    except UnicodeDecodeError:
+                        print(f"✗ Ошибка кодировки: {file_path}")
+                    except Exception as e:
+                        print(f"✗ Ошибка: {file_path} - {e}")
+
+            # Записываем статистику
+            outfile.write(f"\n{'=' * 100}\n")
+            outfile.write(f"СТАТИСТИКА:\n")
+            outfile.write(f"- Обработано файлов: {file_count}\n")
+            outfile.write(f"- Общий размер кода: {total_size} байт\n")
+            outfile.write(f"- Дата сборки: {self._get_timestamp()}\n")
+
+    def _should_ignore(self, file_path):
+        """Проверяет, нужно ли игнорировать файл/папку"""
+        # Проверяем папки
+        for part in file_path.parts:
+            if part in self.ignore_dirs:
+                return True
+
+        # Проверяем файлы
+        if file_path.name in self.ignore_files:
+            return True
+
+        return False
+
+    def _get_timestamp(self):
+        from datetime import datetime
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def show_available_types(self):
+        """Показывает доступные типы файлов"""
+        print("Доступные типы файлов:")
+        for file_type, extensions in self.default_extensions.items():
+            print(f"  {file_type}: {', '.join(extensions)}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Сборка всего кода проекта в один файл')
+    parser.add_argument('project_path', nargs='?', default='.',
+                        help='Путь к проекту (по умолчанию: текущая директория)')
+    parser.add_argument('-o', '--output', default='all_project_code.txt',
+                        help='Имя выходного файла')
+    parser.add_argument('-t', '--types', nargs='+',
+                        choices=['python', 'web', 'java', 'cpp', 'config', 'docs'],
+                        default=['python'],
+                        help='Типы файлов для включения')
+    parser.add_argument('--list-types', action='store_true',
+                        help='Показать доступные типы файлов')
+
+    args = parser.parse_args()
+
+    collector = CodeCollector()
+
+    if args.list_types:
+        collector.show_available_types()
+        return
+
+    print(f"Начинаем сборку кода...")
+    print(f"Проект: {args.project_path}")
+    print(f"Выходной файл: {args.output}")
+    print(f"Типы файлов: {', '.join(args.types)}")
+    print("-" * 50)
+
+    collector.collect_code(args.project_path, args.output, args.types)
+
+    print("-" * 50)
+    print(f"Сборка завершена! Результат сохранен в {args.output}")
+
+
+if __name__ == "__main__":
+    main()
+
+
+================================================================================
+ФАЙЛ: config.py
+РАЗМЕР: 928 байт
+================================================================================
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = os.getenv("ADMIN_ID")
+
+if not BOT_TOKEN:
+    raise ValueError("BOT_TOKEN не найден в .env файле")
+
+# VK переменные
+VK_GROUP_TOKEN = os.getenv("VK_GROUP_TOKEN")
+VK_GROUP_ID = os.getenv("VK_GROUP_ID")
+VK_ADMIN_ID = os.getenv("VK_ADMIN_ID")
+
+# Приведение типов
+if VK_GROUP_ID:
+    try:
+        VK_GROUP_ID = int(VK_GROUP_ID)
+    except (ValueError, TypeError):
+        print("❌ VK_GROUP_ID должен быть числом")
+        VK_GROUP_ID = None
+
+if VK_ADMIN_ID:
+    try:
+        VK_ADMIN_ID = int(VK_ADMIN_ID)
+    except (ValueError, TypeError):
+        print("❌ VK_ADMIN_ID должен быть числом")
+        VK_ADMIN_ID = None
+
+if not VK_GROUP_TOKEN:
+    print("⚠️  VK_GROUP_TOKEN не найден. VK бот отключен")
+
+
+================================================================================
+ФАЙЛ: memory.py
+РАЗМЕР: 1071 байт
+================================================================================
+
+#!/usr/bin/env python3
+# monitor.py
+import psutil
+import logging
+import os
+from datetime import datetime
+
+
+def check_bot_status():
+    """Проверка состояния бота"""
+    bot_running = False
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            if proc.info['cmdline'] and 'run.py' in ' '.join(proc.info['cmdline']):
+                bot_running = True
+                print(f"✅ Бот запущен (PID: {proc.info['pid']})")
+                break
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    if not bot_running:
+        print("❌ Бот не запущен")
+
+    # Проверка использования памяти
+    memory = psutil.virtual_memory()
+    print(f"💾 Использование памяти: {memory.percent}%")
+
+    # Проверка диска
+    disk = psutil.disk_usage('/')
+    print(f"💿 Свободно на диске: {disk.free // (1024 ** 3)}GB")
+
+
+if __name__ == "__main__":
+    check_bot_status()
+
+
+================================================================================
+ФАЙЛ: run.py
+РАЗМЕР: 2084 байт
+================================================================================
+
+# run.py
+import asyncio
+import logging
+import threading
+from bot import main as telegram_main
+from vk_bot import VKBot
+from utils.logger import setup_logger
+from config import VK_GROUP_TOKEN, VK_GROUP_ID
+
+
+async def run_telegram_bot():
+    """Запуск Telegram бота"""
+    try:
+        await telegram_main()
+    except Exception as e:
+        logging.error(f"❌ Ошибка в Telegram боте: {e}")
+
+
+def run_vk_bot():
+    """Запуск VK бота в отдельном потоке"""
+    try:
+        logging.info("🔄 Инициализация VK бота...")
+        vk_bot = VKBot()
+        logging.info("✅ VK бот инициализирован, запускаем...")
+        vk_bot.run()
+    except Exception as e:
+        logging.error(f"❌ Ошибка в VK боте: {e}", exc_info=True)
+
+
+async def main():
+    """Главная функция запуска"""
+    setup_logger()
+    logger = logging.getLogger(__name__)
+
+    logger.info("🚀 Запуск мульти-платформенного бота Lab&Code...")
+
+    # Отладочная информация
+    logger.info(f"VK_GROUP_TOKEN: {'✅ Установлен' if VK_GROUP_TOKEN else '❌ Отсутствует'}")
+    logger.info(f"VK_GROUP_ID: {VK_GROUP_ID}")
+
+    # Запускаем VK бота в отдельном потоке (если настроен)
+    if VK_GROUP_TOKEN and VK_GROUP_ID:
+        logger.info("✅ Запуск VK бота в отдельном потоке...")
+        vk_thread = threading.Thread(target=run_vk_bot, daemon=True)
+        vk_thread.start()
+        logger.info(f"✅ VK поток запущен. ID: {vk_thread.ident}, Alive: {vk_thread.is_alive()}")
+    else:
+        logger.info("❌ VK бот отключен - проверьте настройки")
+
+    # Запускаем Telegram бота в основном потоке
+    logger.info("✅ Запуск Telegram бота...")
+    await run_telegram_bot()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+================================================================================
+ФАЙЛ: test.py
+РАЗМЕР: 1706 байт
+================================================================================
+
+# test_vk_fixed.py
+import vk_api
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+VK_GROUP_TOKEN = os.getenv("VK_GROUP_TOKEN")
+VK_GROUP_ID = os.getenv("VK_GROUP_ID")
+VK_ADMIN_ID = os.getenv("VK_ADMIN_ID")
+
+print("=== Тест VK API ===")
+print(f"VK_GROUP_TOKEN: {VK_GROUP_TOKEN[:20]}..." if VK_GROUP_TOKEN else "❌ VK_GROUP_TOKEN не установлен")
+print(f"VK_GROUP_ID: {VK_GROUP_ID}")
+print(f"VK_ADMIN_ID: {VK_ADMIN_ID}")
+
+if VK_GROUP_TOKEN and VK_GROUP_ID:
+    try:
+        # Инициализация VK API
+        vk_session = vk_api.VkApi(token=VK_GROUP_TOKEN)
+        vk = vk_session.get_api()
+
+        # Проверка информации о группе (работающий метод)
+        group_info = vk.groups.getById(group_id=VK_GROUP_ID)
+        print(f"✅ Группа найдена: {group_info[0]['name']}")
+
+        # Проверка Long Poll настроек
+        print("✅ Long Poll API доступен")
+
+        # Проверка отправки сообщения (используем random_id)
+        if VK_ADMIN_ID:
+            result = vk.messages.send(
+                user_id=int(VK_ADMIN_ID),
+                message="✅ Тестовое сообщение от VK бота",
+                random_id=vk_api.utils.get_random_id()
+            )
+            print(f"✅ Тестовое сообщение отправлено, ID: {result}")
+
+    except vk_api.exceptions.ApiError as e:
+        print(f"❌ Ошибка VK API: {e}")
+    except Exception as e:
+        print(f"❌ Общая ошибка: {e}")
+else:
+    print("❌ Недостаточно данных для теста")
+
+
+================================================================================
+ФАЙЛ: vk_bot.py
+РАЗМЕР: 15727 байт
+================================================================================
+
+# vk_bot.py
+import vk_api
+from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
+from vk_api.utils import get_random_id
+from vk_api.keyboard import VkKeyboard, VkKeyboardColor
+import logging
+import json
+from datetime import datetime
+
+from config import VK_GROUP_TOKEN, VK_GROUP_ID, VK_ADMIN_ID
+from utils.auto_messages import AutoMessageScheduler
+from utils.notifications import notify_admin_vk
+
+logger = logging.getLogger(__name__)
+
+
+class VKBot:
+    def __init__(self):
+        try:
+            logger.info("🔄 Создание VK сессии...")
+            self.vk_session = vk_api.VkApi(token=VK_GROUP_TOKEN)
+            logger.info("🔄 Инициализация LongPoll...")
+            self.longpoll = VkBotLongPoll(self.vk_session, int(VK_GROUP_ID))
+            logger.info("🔄 Получение VK API...")
+            self.vk = self.vk_session.get_api()
+            self.user_states = {}
+            self.user_data = {}
+            self.auto_message_scheduler = AutoMessageScheduler()
+            logger.info("✅ VK бот инициализирован")
+        except Exception as e:
+            logger.error(f"❌ Ошибка инициализации VK бота: {e}", exc_info=True)
+            raise
+
+    def get_keyboard(self, keyboard_type="main_menu"):
+        """Создание клавиатур для VK"""
+        keyboard = VkKeyboard(one_time=True)
+
+        if keyboard_type == "main_menu":
+            keyboard.add_button("🎓 Помощь студентам", color=VkKeyboardColor.PRIMARY)
+            keyboard.add_line()
+            keyboard.add_button("💻 Обучение программированию", color=VkKeyboardColor.SECONDARY)
+
+        elif keyboard_type == "student_help":
+            keyboard.add_button("📝 Лабораторные", color=VkKeyboardColor.PRIMARY)
+            keyboard.add_button("📊 Курсовые", color=VkKeyboardColor.PRIMARY)
+            keyboard.add_line()
+            keyboard.add_button("🎓 Дипломные", color=VkKeyboardColor.PRIMARY)
+            keyboard.add_button("❔ Другое", color=VkKeyboardColor.SECONDARY)
+            keyboard.add_line()
+            keyboard.add_button("⬅️ Назад", color=VkKeyboardColor.NEGATIVE)
+
+        elif keyboard_type == "programming":
+            keyboard.add_button("C++", color=VkKeyboardColor.PRIMARY)
+            keyboard.add_button("Python", color=VkKeyboardColor.PRIMARY)
+            keyboard.add_line()
+            keyboard.add_button("⬅️ Назад", color=VkKeyboardColor.NEGATIVE)
+
+        elif keyboard_type == "format":
+            keyboard.add_button("👤 Индивидуально", color=VkKeyboardColor.PRIMARY)
+            keyboard.add_button("👥 В группе", color=VkKeyboardColor.PRIMARY)
+            keyboard.add_line()
+            keyboard.add_button("⬅️ Назад", color=VkKeyboardColor.NEGATIVE)
+
+        elif keyboard_type == "back_only":
+            keyboard.add_button("⬅️ Назад", color=VkKeyboardColor.NEGATIVE)
+
+        return keyboard.get_keyboard()
+
+    def send_message(self, user_id, message, keyboard=None):
+        """Отправка сообщения пользователю"""
+        try:
+            params = {
+                'user_id': user_id,
+                'message': message,
+                'random_id': get_random_id(),
+            }
+            if keyboard:
+                params['keyboard'] = keyboard
+
+            self.vk.messages.send(**params)
+            logger.info(f"✅ Сообщение отправлено пользователю {user_id}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки сообщения: {e}")
+
+    def handle_start(self, user_id):
+        """Обработка команды старт"""
+        welcome_message = (
+            "👋 Добро пожаловать в Lab&Code!\n\n"
+            "Я помогу вам:\n"
+            "• 🎓 С учебными работами (лабораторные, курсовые, дипломные)\n"
+            "• 💻 Освоить программирование (C++, Python)\n\n"
+            "Выберите направление:"
+        )
+
+        self.user_states[user_id] = "main_menu"
+        self.send_message(user_id, welcome_message, self.get_keyboard("main_menu"))
+
+    def handle_student_help(self, user_id):
+        """Обработка раздела помощи студентам"""
+        message = (
+            "🎓 Помощь студентам\n\n"
+            "Выберите тип работы:\n"
+            "• 📝 Лабораторные работы\n"
+            "• 📊 Курсовые работы\n"
+            "• 🎓 Дипломные работы\n"
+            "• ❔ Другие учебные работы"
+        )
+
+        self.user_states[user_id] = "student_help"
+        self.user_data[user_id] = {"category": "student_help"}
+        self.send_message(user_id, message, self.get_keyboard("student_help"))
+
+    def handle_programming_help(self, user_id):
+        """Обработка раздела обучения программированию"""
+        message = (
+            "💻 Обучение программированию\n\n"
+            "Выберите язык программирования:\n"
+            "• C++ - для системного программирования\n"
+            "• Python - для веб-разработки и анализа данных"
+        )
+
+        self.user_states[user_id] = "programming_language"
+        self.user_data[user_id] = {"category": "programming"}
+        self.send_message(user_id, message, self.get_keyboard("programming"))
+
+    def handle_work_type(self, user_id, work_type):
+        """Обработка выбора типа работы"""
+        work_types = {
+            "лабораторные": "📝 Лабораторные работы",
+            "курсовые": "📊 Курсовые работы",
+            "дипломные": "🎓 Дипломные работы",
+            "другое": "❔ Другие учебные работы"
+        }
+
+        message = (
+            f"{work_types[work_type]}\n\n"
+            "📞 Для обсуждения деталей и расчета стоимости, "
+            "пожалуйста, оставьте ваш контакт (телеgram, email или номер телефона):"
+        )
+
+        self.user_states[user_id] = "waiting_contact"
+        self.user_data[user_id]["work_type"] = work_type
+        self.send_message(user_id, message, self.get_keyboard("back_only"))
+
+    def handle_language_choice(self, user_id, language):
+        """Обработка выбора языка программирования"""
+        languages = {
+            "c++": "C++",
+            "python": "Python"
+        }
+
+        message = (
+            f"💻 {languages[language]}\n\n"
+            "Выберите формат обучения:\n"
+            "• 👤 Индивидуально - персональные занятия\n"
+            "• 👥 В группе - занятия в мини-группах"
+        )
+
+        self.user_states[user_id] = "programming_format"
+        self.user_data[user_id]["language"] = language
+        self.send_message(user_id, message, self.get_keyboard("format"))
+
+    def handle_format_choice(self, user_id, format_type):
+        """Обработка выбора формата обучения"""
+        message = (
+            f"👤 {format_type.capitalize()}\n\n"
+            "📞 Для обсуждения деталей и стоимости занятий, "
+            "пожалуйста, оставьте ваш контакт (telegram, email или номер телефона):"
+        )
+
+        self.user_states[user_id] = "waiting_contact"
+        self.user_data[user_id]["format"] = format_type
+        self.send_message(user_id, message, self.get_keyboard("back_only"))
+
+    def handle_back(self, user_id):
+        """Обработка возврата назад"""
+        current_state = self.user_states.get(user_id, "main_menu")
+
+        if current_state == "student_help":
+            self.handle_start(user_id)
+        elif current_state == "programming_language":
+            self.handle_start(user_id)
+        elif current_state == "programming_format":
+            self.handle_programming_help(user_id)
+        elif current_state == "waiting_contact":
+            if self.user_data.get(user_id, {}).get("category") == "student_help":
+                self.handle_student_help(user_id)
+            else:
+                self.handle_programming_help(user_id)
+        else:
+            self.handle_start(user_id)
+
+    def handle_contact_info(self, user_id, contact_info):
+        """Обработка контактной информации"""
+        user_data = self.user_data.get(user_id, {})
+
+        # Формируем уведомление для админа
+        notification = f"📞 Новый запрос от пользователя VK ID: {user_id}\n"
+
+        if user_data.get("category") == "student_help":
+            work_type = user_data.get("work_type", "не указан")
+            notification += f"🎓 Тип работы: {work_type}\n"
+        else:
+            language = user_data.get("language", "не указан")
+            format_type = user_data.get("format", "не указан")
+            notification += f"💻 Язык: {language}\n"
+            notification += f"👤 Формат: {format_type}\n"
+
+        notification += f"📱 Контакт: {contact_info}\n"
+        notification += f"⏰ Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+        # Отправляем уведомление админу - ИСПРАВЛЕННЫЙ ВЫЗОВ
+        try:
+            from utils.notifications import notify_admin_vk
+            notify_admin_vk(user_data, contact_info, user_id)
+            logger.info(f"✅ Уведомление отправлено админу о контакте от {user_id}")
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки уведомления админу: {e}")
+
+        # Благодарность пользователю
+        thank_message = (
+            "✅ Спасибо! Ваша заявка принята.\n\n"
+            "📞 Мы свяжемся с вами в ближайшее время для уточнения деталей.\n\n"
+            "Если у вас есть срочный вопрос, напишите нам напрямую."
+        )
+
+        self.user_states[user_id] = "main_menu"
+        self.send_message(user_id, thank_message, self.get_keyboard("main_menu"))
+
+    def run(self):
+        """Запуск VK бота"""
+        logger.info("🚀 VK бот запущен, ожидаем сообщения...")
+
+        try:
+            # Проверяем подключение
+            group_info = self.vk.groups.getById(group_id=int(VK_GROUP_ID))
+            logger.info(f"✅ Подключение к группе: {group_info[0]['name']}")
+
+            for event in self.longpoll.listen():
+                if event.type == VkBotEventType.MESSAGE_NEW and not event.object.message.get('from_id') < 0:
+                    user_id = event.object.message['from_id']
+                    text = event.object.message['text'].lower().strip()
+
+                    logger.info(f"📨 VK сообщение от {user_id}: {text}")
+
+                    current_state = self.user_states.get(user_id, "main_menu")
+
+                    # Обработка команд
+                    if text in ['/start', 'start', 'начать', 'старт', 'привет']:
+                        self.handle_start(user_id)
+
+                    # Главное меню
+                    elif current_state == "main_menu":
+                        if "помощь студентам" in text or "🎓" in text:
+                            self.handle_student_help(user_id)
+                        elif "обучение программированию" in text or "💻" in text:
+                            self.handle_programming_help(user_id)
+                        else:
+                            self.handle_start(user_id)
+
+                    # Помощь студентам
+                    elif current_state == "student_help":
+                        if "лабораторные" in text or "📝" in text:
+                            self.handle_work_type(user_id, "лабораторные")
+                        elif "курсовые" in text or "📊" in text:
+                            self.handle_work_type(user_id, "курсовые")
+                        elif "дипломные" in text or "🎓" in text:
+                            self.handle_work_type(user_id, "дипломные")
+                        elif "другое" in text or "❔" in text:
+                            self.handle_work_type(user_id, "другое")
+                        elif "назад" in text or "⬅️" in text:
+                            self.handle_back(user_id)
+                        else:
+                            self.handle_student_help(user_id)
+
+                    # Выбор языка программирования
+                    elif current_state == "programming_language":
+                        if "c++" in text:
+                            self.handle_language_choice(user_id, "c++")
+                        elif "python" in text:
+                            self.handle_language_choice(user_id, "python")
+                        elif "назад" in text or "⬅️" in text:
+                            self.handle_back(user_id)
+                        else:
+                            self.handle_programming_help(user_id)
+
+                    # Выбор формата обучения
+                    elif current_state == "programming_format":
+                        if "индивидуально" in text or "👤" in text:
+                            self.handle_format_choice(user_id, "индивидуально")
+                        elif "в группе" in text or "👥" in text:
+                            self.handle_format_choice(user_id, "в группе")
+                        elif "назад" in text or "⬅️" in text:
+                            self.handle_programming_help(user_id)
+                        else:
+                            self.send_message(user_id, "Выберите формат занятий:", self.get_keyboard("format"))
+
+                    # Ожидание контакта
+                    elif current_state == "waiting_contact":
+                        self.handle_contact_info(user_id, text)
+
+                    # Возврат в главное меню
+                    elif "в главное меню" in text or "🏠" in text:
+                        self.handle_start(user_id)
+
+                    # Любое другое сообщение
+                    else:
+                        self.handle_start(user_id)
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка в VK боте: {e}", exc_info=True)
+
+
+================================================================================
+ФАЙЛ: handlers\common.py
+РАЗМЕР: 695 байт
+================================================================================
+
+from aiogram import Router
+from aiogram.types import Message
+from aiogram.fsm.context import FSMContext
+from keyboards.inline import main_menu_kb
+
+router = Router()
+
+
+@router.message()
+async def handle_any_message(message: Message, state: FSMContext):
+    """Обработка любых сообщений вне состояний"""
+    current_state = await state.get_state()
+
+    if current_state is None:
+        # Если нет активного состояния, предлагаем начать
+        await message.answer(
+            "Используйте кнопки ниже для навигации:",
+            reply_markup=main_menu_kb()
+        )
+
+
+================================================================================
+ФАЙЛ: handlers\programming.py
+РАЗМЕР: 3791 байт
+================================================================================
+
+from aiogram import Router, F
+from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from datetime import datetime
+import logging
+from keyboards.inline import language_kb, format_kb, main_menu_kb, back_kb, main_menu_button_kb
+from utils.notifications import notify_admin
+from utils.context import context
+
+router = Router()
+logger = logging.getLogger('app')  # Используем наш кастомный логгер
+
+
+class ProgrammingStates(StatesGroup):
+    waiting_language = State()
+    waiting_format = State()
+    waiting_contact = State()
+
+
+@router.callback_query(F.data == "programming_help")
+async def programming_help_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer(
+        "Какой язык хотите изучать?",
+        reply_markup=language_kb()
+    )
+    await state.set_state(ProgrammingStates.waiting_language)
+    await callback.answer()
+
+
+@router.callback_query(ProgrammingStates.waiting_language, F.data.startswith("lang_"))
+async def language_selected(callback: CallbackQuery, state: FSMContext):
+    language = "C++" if callback.data == "lang_cpp" else "Python"
+
+    await state.update_data(
+        category="programming",
+        language=language,
+        username=callback.from_user.username,
+        user_id=callback.from_user.id,
+        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+
+    await callback.message.answer(
+        "Выберите формат занятий:",
+        reply_markup=format_kb()
+    )
+
+    await state.set_state(ProgrammingStates.waiting_format)
+    await callback.answer()
+
+
+@router.callback_query(ProgrammingStates.waiting_format, F.data.startswith("format_"))
+async def format_selected(callback: CallbackQuery, state: FSMContext):
+    format_type = "индивидуально" if callback.data == "format_individual" else "в группе"
+
+    await state.update_data(format=format_type)
+
+    await callback.message.answer(
+        "Пожалуйста, оставьте свой номер телефона или @ник в Telegram для связи.",
+        reply_markup=back_kb("programming_help")
+    )
+
+    await state.set_state(ProgrammingStates.waiting_contact)
+    await callback.answer()
+
+
+@router.message(ProgrammingStates.waiting_contact)
+async def process_programming_contact(message: Message, state: FSMContext):
+    contact_info = message.text
+    user_data = await state.get_data()
+
+    # Логируем в том же формате что и aiogram
+    logger.info(f"📋 Новый запрос на обучение:\n"
+                f"👤 Пользователь: @{user_data.get('username')} (ID: {user_data.get('user_id')})\n"
+                f"💻 Язык: {user_data.get('language')}\n"
+                f"📚 Формат: {user_data.get('format')}\n"
+                f"📞 Контакт: {contact_info}\n"
+                f"{'=' * 50}")
+
+    # Отправляем уведомление админу через context
+    await notify_admin(context.bot, user_data, contact_info)
+
+    # Отправляем подтверждение пользователю С КНОПКОЙ
+    await message.answer(
+        "✅ Спасибо! Мы свяжемся с вами в течение 15 минут.\n\n"
+        "🎁 Пока ждёте, можете скачать бонус: [ссылка на PDF]",
+        reply_markup=main_menu_button_kb()
+    )
+
+    # Планируем автосообщения через context
+    await context.auto_message_scheduler.schedule_auto_messages(message.from_user.id)
+
+    await state.clear()
+
+
+================================================================================
+ФАЙЛ: handlers\start.py
+РАЗМЕР: 963 байт
+================================================================================
+
+from aiogram import Router, F
+from aiogram.types import Message, CallbackQuery
+from aiogram.filters import CommandStart
+from keyboards.inline import main_menu_kb
+
+router = Router()
+
+
+@router.message(CommandStart())
+async def cmd_start(message: Message):
+    welcome_text = """
+👋 Привет! Это Lab&Code.
+
+Мы помогаем:
+📚 Студентам — с лабораторными, курсовыми, дипломами
+💻 Всем, кто хочет освоить C++ или Python
+
+Что вас интересует?
+    """
+
+    await message.answer(welcome_text, reply_markup=main_menu_kb())
+
+
+@router.callback_query(F.data == "main_menu")
+async def back_to_main(callback: CallbackQuery):
+    welcome_text = """
+👋 С возвращением в Lab&Code!
+
+Что вас интересует?
+    """
+
+    await callback.message.answer(welcome_text, reply_markup=main_menu_kb())
+    await callback.answer()
+
+
+================================================================================
+ФАЙЛ: handlers\student_help.py
+РАЗМЕР: 3067 байт
+================================================================================
+
+from aiogram import Router, F
+from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from datetime import datetime
+import logging
+from keyboards.inline import student_help_kb, main_menu_kb, back_kb, main_menu_button_kb
+from utils.notifications import notify_admin
+from utils.context import context
+
+router = Router()
+logger = logging.getLogger('app')  # Используем наш кастомный логгер
+
+
+class StudentStates(StatesGroup):
+    waiting_contact = State()
+
+
+@router.callback_query(F.data == "student_help")
+async def student_help_start(callback: CallbackQuery):
+    await callback.message.answer(
+        "Какие работы нужны?",
+        reply_markup=student_help_kb()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("work_"))
+async def student_work_selected(callback: CallbackQuery, state: FSMContext):
+    work_types = {
+        "work_labs": "Лабораторные",
+        "work_coursework": "Курсовые",
+        "work_diploma": "Дипломные",
+        "work_other": "Другое"
+    }
+
+    work_type = work_types.get(callback.data, "Другое")
+
+    await state.update_data(
+        category="student_help",
+        work_type=work_type,
+        username=callback.from_user.username,
+        user_id=callback.from_user.id,
+        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+
+    await callback.message.answer(
+        "Пожалуйста, оставьте свой номер телефона или @ник в Telegram для связи.",
+        reply_markup=back_kb("student_help")
+    )
+
+    await state.set_state(StudentStates.waiting_contact)
+    await callback.answer()
+
+
+@router.message(StudentStates.waiting_contact)
+async def process_student_contact(message: Message, state: FSMContext):
+    contact_info = message.text
+    user_data = await state.get_data()
+
+    # Логируем в том же формате что и aiogram
+    logger.info(f"📋 Новый запрос от студента:\n"
+                f"👤 Пользователь: @{user_data.get('username')} (ID: {user_data.get('user_id')})\n"
+                f"📝 Тип работы: {user_data.get('work_type')}\n"
+                f"📞 Контакт: {contact_info}\n"
+                f"{'=' * 50}")
+
+    # Отправляем уведомление админу через context
+    await notify_admin(context.bot, user_data, contact_info)
+
+    # Отправляем подтверждение пользователю С КНОПКОЙ
+    await message.answer(
+        "✅ Спасибо! Мы свяжемся с вами в течение 15 минут.",
+        reply_markup=main_menu_button_kb()
+    )
+
+    # Планируем автосообщения через context
+    await context.auto_message_scheduler.schedule_auto_messages(message.from_user.id)
+
+    await state.clear()
+
+
+================================================================================
+ФАЙЛ: handlers\__init__.py
+РАЗМЕР: 0 байт
+================================================================================
+
+
+
+
+================================================================================
+ФАЙЛ: keyboards\inline.py
+РАЗМЕР: 2604 байт
+================================================================================
+
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+# Главное меню
+def main_menu_kb():
+    keyboard = InlineKeyboardBuilder()
+    keyboard.add(
+        InlineKeyboardButton(text="🎓 Помощь студентам", callback_data="student_help"),
+        InlineKeyboardButton(text="💻 Обучение программированию", callback_data="programming_help")
+    )
+    return keyboard.adjust(1).as_markup()
+
+# Меню помощи студентам
+def student_help_kb():
+    keyboard = InlineKeyboardBuilder()
+    keyboard.add(
+        InlineKeyboardButton(text="📝 Лабораторные", callback_data="work_labs"),
+        InlineKeyboardButton(text="📊 Курсовые", callback_data="work_coursework"),
+        InlineKeyboardButton(text="🎓 Дипломные", callback_data="work_diploma"),
+        InlineKeyboardButton(text="❔ Другое", callback_data="work_other"),
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")
+    )
+    return keyboard.adjust(1).as_markup()
+
+# Меню выбора языка
+def language_kb():
+    keyboard = InlineKeyboardBuilder()
+    keyboard.add(
+        InlineKeyboardButton(text="C++", callback_data="lang_cpp"),
+        InlineKeyboardButton(text="Python", callback_data="lang_python"),
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="main_menu")
+    )
+    return keyboard.adjust(2, 1).as_markup()
+
+# Меню формата обучения
+def format_kb():
+    keyboard = InlineKeyboardBuilder()
+    keyboard.add(
+        InlineKeyboardButton(text="👤 Онлайн индивидуально", callback_data="format_individual"),
+        InlineKeyboardButton(text="👥 Онлайн в группе", callback_data="format_group"),
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="programming_help")
+    )
+    return keyboard.adjust(1).as_markup()
+
+# Кнопка только "Назад"
+def back_kb(target: str = "main_menu"):
+    keyboard = InlineKeyboardBuilder()
+    keyboard.add(InlineKeyboardButton(text="⬅️ Назад", callback_data=target))
+    return keyboard.as_markup()
+
+# Клавиатура для подтверждения с кнопкой в главное меню
+def main_menu_button_kb():
+    keyboard = InlineKeyboardBuilder()
+    keyboard.add(
+        InlineKeyboardButton(text="🏠 В главное меню", callback_data="main_menu")
+    )
+    return keyboard.as_markup()
+
+
+================================================================================
+ФАЙЛ: keyboards\__init__.py
+РАЗМЕР: 0 байт
+================================================================================
+
+
+
+
+================================================================================
+ФАЙЛ: utils\auto_messages.py
+РАЗМЕР: 4613 байт
+================================================================================
+
+# utils/auto_messages.py
+import asyncio
+import logging
+from typing import Dict, List
+
+auto_message_logger = logging.getLogger('app')
+
+
+class AutoMessageScheduler:
+    def __init__(self, bot=None):
+        self.bot = bot
+        self.scheduled_tasks: Dict[int, List[asyncio.Task]] = {}
+        self.vk_scheduled_tasks: Dict[int, List[asyncio.Task]] = {}
+        auto_message_logger.info("AutoMessageScheduler инициализирован")
+
+    def set_bot(self, bot):
+        """Установка бота после инициализации"""
+        self.bot = bot
+        auto_message_logger.info("Бот установлен в AutoMessageScheduler")
+
+    async def schedule_auto_messages(self, user_id: int):
+        """Планирование автосообщений для Telegram"""
+        if self.bot is None:
+            auto_message_logger.error("Бот не установлен в AutoMessageScheduler")
+            return
+
+        messages = [
+            (86400, "🔥 Полезно знать: 5 типичных ошибок студентов при написании кода."),  # 1 день
+            (172800, "📢 Отзыв: 'Lab&Code помог мне защитить диплом по Python!'"),  # 2 дня
+            (259200, "⏳ Осталось 3 места на сентябрьский курс Python. Успей записаться!")  # 3 дня
+        ]
+
+        for delay, text in messages:
+            task = asyncio.create_task(
+                self.send_auto_message(user_id, text, delay)
+            )
+            if user_id not in self.scheduled_tasks:
+                self.scheduled_tasks[user_id] = []
+            self.scheduled_tasks[user_id].append(task)
+
+        auto_message_logger.info(f"Запланировано {len(messages)} автосообщений для пользователя {user_id}")
+
+    async def schedule_vk_messages(self, user_id: int, vk_bot):
+        """Планирование автосообщений для VK"""
+        messages = [
+            (86400, "🔥 Полезно знать: 5 типичных ошибок студентов при написании кода."),  # 1 день
+            (172800, "📢 Отзыв: 'Lab&Code помог мне защитить диплом по Python!'"),  # 2 дня
+            (259200, "⏳ Осталось 3 места на сентябрьский курс Python. Успей записаться!")  # 3 дня
+        ]
+
+        for delay, text in messages:
+            task = asyncio.create_task(
+                self.send_vk_auto_message(user_id, text, delay, vk_bot)
+            )
+            if user_id not in self.vk_scheduled_tasks:
+                self.vk_scheduled_tasks[user_id] = []
+            self.vk_scheduled_tasks[user_id].append(task)
+
+        auto_message_logger.info(f"Запланировано {len(messages)} VK автосообщений для пользователя {user_id}")
+
+    async def send_auto_message(self, user_id: int, message: str, delay: int):
+        """Отправка запланированного сообщения в Telegram"""
+        try:
+            await asyncio.sleep(delay)
+            await self.bot.send_message(user_id, message)
+            auto_message_logger.info(f"Автосообщение отправлено пользователю {user_id}")
+        except Exception as e:
+            auto_message_logger.error(f"Ошибка отправки автосообщения пользователю {user_id}: {e}")
+
+    async def send_vk_auto_message(self, user_id: int, message: str, delay: int, vk_bot):
+        """Отправка запланированного сообщения в VK"""
+        try:
+            await asyncio.sleep(delay)
+            vk_bot.send_message(user_id, message)
+            auto_message_logger.info(f"VK автосообщение отправлено пользователю {user_id}")
+        except Exception as e:
+            auto_message_logger.error(f"Ошибка отправки VK автосообщения пользователю {user_id}: {e}")
+
+    def cancel_user_tasks(self, user_id: int):
+        """Отмена задач для пользователя"""
+        if user_id in self.scheduled_tasks:
+            for task in self.scheduled_tasks[user_id]:
+                task.cancel()
+            del self.scheduled_tasks[user_id]
+            auto_message_logger.info(f"Задачи отменены для пользователя {user_id}")
+
+
+================================================================================
+ФАЙЛ: utils\context.py
+РАЗМЕР: 438 байт
+================================================================================
+
+# utils/context.py
+"""Глобальный контекст для избежания циклических импортов"""
+
+class BotContext:
+    def __init__(self):
+        self.bot = None
+        self.auto_message_scheduler = None
+
+# Глобальный экземпляр
+context = BotContext()
+
+def set_bot(bot):
+    context.bot = bot
+
+def set_scheduler(scheduler):
+    context.auto_message_scheduler = scheduler
+
+
+================================================================================
+ФАЙЛ: utils\logger.py
+РАЗМЕР: 1666 байт
+================================================================================
+
+# utils/logger.py
+import logging
+import os
+from logging.handlers import TimedRotatingFileHandler
+import glob
+import tempfile
+
+def setup_logger():
+    """Настройка логгера с записью во временную директорию"""
+
+    # Используем временную директорию
+    log_dir = tempfile.gettempdir()
+
+    # Основной форматтер
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    # Основной логгер
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+
+    # Файловый обработчик во временную директорию
+    log_file = os.path.join(log_dir, 'bot.log')
+    file_handler = TimedRotatingFileHandler(
+        filename=log_file,
+        when='W0',
+        interval=1,
+        backupCount=4,
+        encoding='utf-8'
+    )
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.INFO)
+
+    # Консольный обработчик
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(logging.INFO)
+
+    # Очищаем старые обработчики и добавляем новые
+    logger.handlers.clear()
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    logging.info(f"✅ Логгер настроен. Логи в: {log_file}")
+
+    return logger
+
+def cleanup_old_logs():
+    """Очистка старых лог-файлов (заглушка)"""
+    pass
+
+
+================================================================================
+ФАЙЛ: utils\notifications.py
+РАЗМЕР: 6195 байт
+================================================================================
+
+# utils/notifications.py
+import logging
+from aiogram import Bot
+from config import ADMIN_ID, VK_ADMIN_ID, VK_GROUP_TOKEN
+import vk_api
+from datetime import datetime
+
+notification_logger = logging.getLogger('app')
+
+
+async def notify_admin(bot: Bot, user_data: dict, contact_info: str):
+    """Отправка уведомления администратору в Telegram"""
+    if not ADMIN_ID:
+        notification_logger.warning("ADMIN_ID не установлен. Уведомление не отправлено.")
+        return
+
+    try:
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        if user_data.get('category') == 'student_help':
+            message_text = f"""
+📋 **НОВЫЙ ЗАПРОС ОТ СТУДЕНТА**
+
+👤 **Пользователь:** @{user_data.get('username', 'N/A')} (ID: {user_data.get('user_id', 'N/A')})
+📝 **Тип работы:** {user_data.get('work_type', 'N/A')}
+📞 **Контакт:** {contact_info}
+🕐 **Время:** {timestamp}
+
+⚡ **Требует быстрого ответа!**
+            """
+        else:
+            message_text = f"""
+📋 **НОВЫЙ ЗАПРОС НА ОБУЧЕНИЕ**
+
+👤 **Пользователь:** @{user_data.get('username', 'N/A')} (ID: {user_data.get('user_id', 'N/A')})
+💻 **Язык:** {user_data.get('language', 'N/A')}
+📚 **Формат:** {user_data.get('format', 'N/A')}
+📞 **Контакт:** {contact_info}
+🕐 **Время:** {timestamp}
+
+⚡ **Требует быстрого ответа!**
+            """
+
+        await bot.send_message(
+            chat_id=ADMIN_ID,
+            text=message_text,
+            parse_mode='Markdown'
+        )
+        notification_logger.info(f"Уведомление отправлено админу {ADMIN_ID} от пользователя {user_data.get('user_id')}")
+
+    except Exception as e:
+        notification_logger.error(f"Ошибка отправки уведомления админу: {e}")
+
+
+def notify_admin_vk(user_data: dict, contact_info: str, user_id: int):
+    """Отправка уведомления администратору в VK"""
+    if not VK_ADMIN_ID or not VK_GROUP_TOKEN:
+        notification_logger.warning("VK_ADMIN_ID или VK_GROUP_TOKEN не установлены. Уведомление не отправлено.")
+        return
+
+    try:
+        # Создаем новую сессию VK для отправки уведомления
+        vk_session = vk_api.VkApi(token=VK_GROUP_TOKEN)
+        vk = vk_session.get_api()
+
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        if user_data.get('category') == 'student_help':
+            message_text = f"""
+📋 НОВЫЙ ЗАПРОС ОТ СТУДЕНТА (VK)
+
+👤 Пользователь: VK ID: {user_id}
+📝 Тип работы: {user_data.get('work_type', 'N/A')}
+📞 Контакт: {contact_info}
+🕐 Время: {timestamp}
+
+⚡ Требует быстрого ответа!
+            """
+        else:
+            message_text = f"""
+📋 НОВЫЙ ЗАПРОС НА ОБУЧЕНИЕ (VK)
+
+👤 Пользователь: VK ID: {user_id}
+💻 Язык: {user_data.get('language', 'N/A')}
+📚 Формат: {user_data.get('format', 'N/A')}
+📞 Контакт: {contact_info}
+🕐 Время: {timestamp}
+
+⚡ Требует быстрого ответа!
+            """
+
+        # Отправляем сообщение администратору VK
+        vk.messages.send(
+            user_id=int(VK_ADMIN_ID),
+            message=message_text,
+            random_id=vk_api.utils.get_random_id()
+        )
+
+        notification_logger.info(f"VK уведомление отправлено админу {VK_ADMIN_ID} от пользователя {user_id}")
+
+    except vk_api.exceptions.ApiError as e:
+        notification_logger.error(f"VK API ошибка отправки уведомления админу: {e}")
+    except Exception as e:
+        notification_logger.error(f"Общая ошибка отправки VK уведомления админу: {e}")
+
+
+# Альтернативная функция, если нужно использовать существующую VK сессию
+def notify_admin_vk_with_session(vk_api_object, user_data: dict, contact_info: str, user_id: int):
+    """Отправка уведомления администратору в VK с использованием существующего VK API объекта"""
+    if not VK_ADMIN_ID:
+        notification_logger.warning("VK_ADMIN_ID не установлен. Уведомление не отправлено.")
+        return
+
+    try:
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        if user_data.get('category') == 'student_help':
+            message_text = f"""
+📋 НОВЫЙ ЗАПРОС ОТ СТУДЕНТА (VK)
+
+👤 Пользователь: VK ID: {user_id}
+📝 Тип работы: {user_data.get('work_type', 'N/A')}
+📞 Контакт: {contact_info}
+🕐 Время: {timestamp}
+
+⚡ Требует быстрого ответа!
+            """
+        else:
+            message_text = f"""
+📋 НОВЫЙ ЗАПРОС НА ОБУЧЕНИЕ (VK)
+
+👤 Пользователь: VK ID: {user_id}
+💻 Язык: {user_data.get('language', 'N/A')}
+📚 Формат: {user_data.get('format', 'N/A')}
+📞 Контакт: {contact_info}
+🕐 Время: {timestamp}
+
+⚡ Требует быстрого ответа!
+            """
+
+        # Используем переданный VK API объект
+        vk_api_object.messages.send(
+            user_id=int(VK_ADMIN_ID),
+            message=message_text,
+            random_id=vk_api.utils.get_random_id()
+        )
+
+        notification_logger.info(f"VK уведомление отправлено админу {VK_ADMIN_ID} от пользователя {user_id}")
+
+    except Exception as e:
+        notification_logger.error(f"Ошибка отправки VK уведомления админу: {e}")
+
+
+====================================================================================================
+СТАТИСТИКА:
+- Обработано файлов: 19
+- Общий размер кода: 55967 байт
+- Дата сборки: 2025-11-06 12:11:57

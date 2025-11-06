@@ -5,8 +5,6 @@ from vk_api.utils import get_random_id
 from vk_api.keyboard import VkKeyboard, VkKeyboardColor
 import logging
 import json
-import time
-import requests
 from datetime import datetime
 
 from config import VK_GROUP_TOKEN, VK_GROUP_ID, VK_ADMIN_ID
@@ -18,87 +16,19 @@ logger = logging.getLogger(__name__)
 
 class VKBot:
     def __init__(self):
-        self.max_retries = 10  # Увеличиваем количество попыток
-        self.retry_delay = 30  # секунд
-        self.running = True
-        self._init_session()
-
-    def _init_session(self):
-        """Инициализация VK сессии с обработкой ошибок"""
         try:
             logger.info("🔄 Создание VK сессии...")
-            # Добавляем таймауты и повторные попытки
-            session = requests.Session()
-            session.timeout = 30
-            self.vk_session = vk_api.VkApi(
-                token=VK_GROUP_TOKEN,
-                session=session,
-                api_version='5.131'
-            )
+            self.vk_session = vk_api.VkApi(token=VK_GROUP_TOKEN)
             logger.info("🔄 Инициализация LongPoll...")
-            # Увеличиваем таймаут LongPoll
-            self.longpoll = VkBotLongPoll(
-                self.vk_session,
-                int(VK_GROUP_ID),
-                wait=25
-            )
+            self.longpoll = VkBotLongPoll(self.vk_session, int(VK_GROUP_ID))
             logger.info("🔄 Получение VK API...")
             self.vk = self.vk_session.get_api()
             self.user_states = {}
             self.user_data = {}
             self.auto_message_scheduler = AutoMessageScheduler()
             logger.info("✅ VK бот инициализирован")
-            return True
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации VK бота: {e}", exc_info=True)
-            return False
-
-    def _test_connection(self):
-        """Проверка соединения с VK API"""
-        try:
-            # Проверяем доступность VK API
-            response = requests.get(
-                'https://api.vk.com/method/utils.getServerTime',
-                timeout=10
-            )
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    if 'response' in data:
-                        logger.info("✅ Соединение с VK API установлено")
-                        return True
-                    else:
-                        logger.warning("⚠️ VK API вернул неожиданный ответ")
-                        return False
-                except json.JSONDecodeError:
-                    logger.warning("⚠️ VK API вернул не JSON ответ")
-                    return False
-            else:
-                logger.warning(f"⚠️ VK API недоступен, статус: {response.status_code}")
-                return False
-        except Exception as e:
-            logger.warning(f"⚠️ Проблемы с соединением VK API: {e}")
-            return False
-
-    def _reconnect(self):
-        """Переподключение к VK API"""
-        logger.info("🔄 Попытка переподключения к VK...")
-        time.sleep(self.retry_delay)
-        return self._init_session()
-
-    def _safe_longpoll_listen(self):
-        """Безопасное прослушивание LongPoll с обработкой JSON ошибок"""
-        try:
-            for event in self.longpoll.listen():
-                yield event
-        except (json.JSONDecodeError, requests.exceptions.JSONDecodeError) as e:
-            logger.error(f"❌ Ошибка парсинга JSON от VK: {e}")
-            raise ConnectionError("JSON parse error") from e
-        except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Сетевая ошибка VK: {e}")
-            raise ConnectionError("Network error") from e
-        except Exception as e:
-            logger.error(f"❌ Неожиданная ошибка LongPoll: {e}")
             raise
 
     def get_keyboard(self, keyboard_type="main_menu"):
@@ -279,7 +209,7 @@ class VKBot:
         notification += f"📱 Контакт: {contact_info}\n"
         notification += f"⏰ Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
-        # Отправляем уведомление админу
+        # Отправляем уведомление админу - ИСПРАВЛЕННЫЙ ВЫЗОВ
         try:
             from utils.notifications import notify_admin_vk
             notify_admin_vk(user_data, contact_info, user_id)
@@ -298,139 +228,84 @@ class VKBot:
         self.send_message(user_id, thank_message, self.get_keyboard("main_menu"))
 
     def run(self):
-        """Запуск VK бота с улучшенным переподключением"""
+        """Запуск VK бота"""
         logger.info("🚀 VK бот запущен, ожидаем сообщения...")
 
-        retry_count = 0
+        try:
+            # Проверяем подключение
+            group_info = self.vk.groups.getById(group_id=int(VK_GROUP_ID))
+            logger.info(f"✅ Подключение к группе: {group_info[0]['name']}")
 
-        while self.running and retry_count < self.max_retries:
-            try:
-                # Проверяем подключение
-                if not self._test_connection():
-                    logger.warning("⚠️ Проблемы с интернет-соединением")
-                    time.sleep(10)
-                    continue
+            for event in self.longpoll.listen():
+                if event.type == VkBotEventType.MESSAGE_NEW and not event.object.message.get('from_id') < 0:
+                    user_id = event.object.message['from_id']
+                    text = event.object.message['text'].lower().strip()
 
-                # Проверяем подключение к группе
-                try:
-                    group_info = self.vk.groups.getById(group_id=int(VK_GROUP_ID))
-                    logger.info(f"✅ Подключение к группе: {group_info[0]['name']}")
-                except Exception as e:
-                    logger.error(f"❌ Ошибка подключения к группе: {e}")
-                    retry_count += 1
-                    if retry_count < self.max_retries:
-                        logger.info(f"🔄 Переподключение через {self.retry_delay} секунд...")
-                        time.sleep(self.retry_delay)
-                        if not self._reconnect():
-                            logger.error("❌ Не удалось переподключиться")
-                        continue
-                    else:
-                        break
+                    logger.info(f"📨 VK сообщение от {user_id}: {text}")
 
-                # Сбрасываем счетчик повторных попыток при успешном подключении
-                retry_count = 0
+                    current_state = self.user_states.get(user_id, "main_menu")
 
-                # Основной цикл обработки событий
-                for event in self._safe_longpoll_listen():
-                    if not self.running:
-                        break
+                    # Обработка команд
+                    if text in ['/start', 'start', 'начать', 'старт', 'привет']:
+                        self.handle_start(user_id)
 
-                    if event.type == VkBotEventType.MESSAGE_NEW and not event.object.message.get('from_id') < 0:
-                        user_id = event.object.message['from_id']
-                        text = event.object.message['text'].lower().strip()
-
-                        logger.info(f"📨 VK сообщение от {user_id}: {text}")
-
-                        current_state = self.user_states.get(user_id, "main_menu")
-
-                        # Обработка команд
-                        if text in ['/start', 'start', 'начать', 'старт', 'привет']:
-                            self.handle_start(user_id)
-
-                        # Главное меню
-                        elif current_state == "main_menu":
-                            if "помощь студентам" in text or "🎓" in text:
-                                self.handle_student_help(user_id)
-                            elif "обучение программированию" in text or "💻" in text:
-                                self.handle_programming_help(user_id)
-                            else:
-                                self.handle_start(user_id)
-
-                        # Помощь студентам
-                        elif current_state == "student_help":
-                            if "лабораторные" in text or "📝" in text:
-                                self.handle_work_type(user_id, "лабораторные")
-                            elif "курсовые" in text or "📊" in text:
-                                self.handle_work_type(user_id, "курсовые")
-                            elif "дипломные" in text or "🎓" in text:
-                                self.handle_work_type(user_id, "дипломные")
-                            elif "другое" in text or "❔" in text:
-                                self.handle_work_type(user_id, "другое")
-                            elif "назад" in text or "⬅️" in text:
-                                self.handle_back(user_id)
-                            else:
-                                self.handle_student_help(user_id)
-
-                        # Выбор языка программирования
-                        elif current_state == "programming_language":
-                            if "c++" in text:
-                                self.handle_language_choice(user_id, "c++")
-                            elif "python" in text:
-                                self.handle_language_choice(user_id, "python")
-                            elif "назад" in text or "⬅️" in text:
-                                self.handle_back(user_id)
-                            else:
-                                self.handle_programming_help(user_id)
-
-                        # Выбор формата обучения
-                        elif current_state == "programming_format":
-                            if "индивидуально" in text or "👤" in text:
-                                self.handle_format_choice(user_id, "индивидуально")
-                            elif "в группе" in text or "👥" in text:
-                                self.handle_format_choice(user_id, "в группе")
-                            elif "назад" in text or "⬅️" in text:
-                                self.handle_programming_help(user_id)
-                            else:
-                                self.send_message(user_id, "Выберите формат занятий:", self.get_keyboard("format"))
-
-                        # Ожидание контакта
-                        elif current_state == "waiting_contact":
-                            self.handle_contact_info(user_id, text)
-
-                        # Возврат в главное меню
-                        elif "в главное меню" in text or "🏠" in text:
-                            self.handle_start(user_id)
-
-                        # Любое другое сообщение
+                    # Главное меню
+                    elif current_state == "main_menu":
+                        if "помощь студентам" in text or "🎓" in text:
+                            self.handle_student_help(user_id)
+                        elif "обучение программированию" in text or "💻" in text:
+                            self.handle_programming_help(user_id)
                         else:
                             self.handle_start(user_id)
 
-            except (ConnectionError, requests.exceptions.RequestException) as e:
-                retry_count += 1
-                logger.error(f"❌ Сетевая ошибка VK (попытка {retry_count}/{self.max_retries}): {e}")
-                if retry_count < self.max_retries:
-                    logger.info(f"🔄 Переподключение через {self.retry_delay} секунд...")
-                    if not self._reconnect():
-                        logger.error("❌ Не удалось переподключиться")
-                else:
-                    logger.error("❌ Достигнут лимит попыток переподключения. VK бот остановлен.")
-                    break
+                    # Помощь студентам
+                    elif current_state == "student_help":
+                        if "лабораторные" in text or "📝" in text:
+                            self.handle_work_type(user_id, "лабораторные")
+                        elif "курсовые" in text or "📊" in text:
+                            self.handle_work_type(user_id, "курсовые")
+                        elif "дипломные" in text or "🎓" in text:
+                            self.handle_work_type(user_id, "дипломные")
+                        elif "другое" in text or "❔" in text:
+                            self.handle_work_type(user_id, "другое")
+                        elif "назад" in text or "⬅️" in text:
+                            self.handle_back(user_id)
+                        else:
+                            self.handle_student_help(user_id)
 
-            except Exception as e:
-                retry_count += 1
-                logger.error(f"❌ Неожиданная ошибка VK бота (попытка {retry_count}/{self.max_retries}): {e}", exc_info=True)
-                if retry_count < self.max_retries:
-                    logger.info(f"🔄 Перезапуск через {self.retry_delay} секунд...")
-                    time.sleep(self.retry_delay)
-                    if not self._reconnect():
-                        logger.error("❌ Не удалось переподключиться")
-                else:
-                    logger.error("❌ Достигнут лимит попыток переподключения. VK бот остановлен.")
-                    break
+                    # Выбор языка программирования
+                    elif current_state == "programming_language":
+                        if "c++" in text:
+                            self.handle_language_choice(user_id, "c++")
+                        elif "python" in text:
+                            self.handle_language_choice(user_id, "python")
+                        elif "назад" in text or "⬅️" in text:
+                            self.handle_back(user_id)
+                        else:
+                            self.handle_programming_help(user_id)
 
-        logger.error("❌ VK бот завершил работу из-за множественных ошибок")
+                    # Выбор формата обучения
+                    elif current_state == "programming_format":
+                        if "индивидуально" in text or "👤" in text:
+                            self.handle_format_choice(user_id, "индивидуально")
+                        elif "в группе" in text or "👥" in text:
+                            self.handle_format_choice(user_id, "в группе")
+                        elif "назад" in text or "⬅️" in text:
+                            self.handle_programming_help(user_id)
+                        else:
+                            self.send_message(user_id, "Выберите формат занятий:", self.get_keyboard("format"))
 
-    def stop(self):
-        """Остановка бота"""
-        logger.info("⏹️ Остановка VK бота...")
-        self.running = False
+                    # Ожидание контакта
+                    elif current_state == "waiting_contact":
+                        self.handle_contact_info(user_id, text)
+
+                    # Возврат в главное меню
+                    elif "в главное меню" in text or "🏠" in text:
+                        self.handle_start(user_id)
+
+                    # Любое другое сообщение
+                    else:
+                        self.handle_start(user_id)
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка в VK боте: {e}", exc_info=True)
