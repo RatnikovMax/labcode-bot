@@ -3,7 +3,17 @@ services:
     build: .
     container_name: labcode-bot
     restart: unless-stopped
-    # volumes:
-    #   - ./logs:/app/logs  # Убрали эту строку
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    dns_search: .
+    extra_hosts:
+      - "lp.vk.com:87.240.132.78"
+    networks:
+      - labcode-bot_default
     env_file:
       - .env
+
+networks:
+  labcode-bot_default:
+    driver: bridge
