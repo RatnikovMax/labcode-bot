@@ -7,12 +7,18 @@ services:
       - 8.8.8.8
       - 1.1.1.1
     dns_search: .
-    extra_hosts:
-      - "lp.vk.com:87.240.132.78"
+    # Убираем extra_hosts - они могут вызывать проблемы
     networks:
       - labcode-bot_default
     env_file:
       - .env
+    # Добавляем healthcheck
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('https://api.vk.com/', timeout=5) || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 networks:
   labcode-bot_default:

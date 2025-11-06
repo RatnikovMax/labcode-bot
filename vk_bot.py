@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class VKBot:
     def __init__(self):
-        self.max_retries = 5
+        self.max_retries = 10  # Увеличиваем количество попыток
         self.retry_delay = 30  # секунд
         self.running = True
         self._init_session()
@@ -27,9 +27,21 @@ class VKBot:
         """Инициализация VK сессии с обработкой ошибок"""
         try:
             logger.info("🔄 Создание VK сессии...")
-            self.vk_session = vk_api.VkApi(token=VK_GROUP_TOKEN)
+            # Добавляем таймауты и повторные попытки
+            session = requests.Session()
+            session.timeout = 30
+            self.vk_session = vk_api.VkApi(
+                token=VK_GROUP_TOKEN,
+                session=session,
+                api_version='5.131'
+            )
             logger.info("🔄 Инициализация LongPoll...")
-            self.longpoll = VkBotLongPoll(self.vk_session, int(VK_GROUP_ID))
+            # Увеличиваем таймаут LongPoll
+            self.longpoll = VkBotLongPoll(
+                self.vk_session,
+                int(VK_GROUP_ID),
+                wait=25
+            )
             logger.info("🔄 Получение VK API...")
             self.vk = self.vk_session.get_api()
             self.user_states = {}
@@ -44,21 +56,50 @@ class VKBot:
     def _test_connection(self):
         """Проверка соединения с VK API"""
         try:
-            # Простая проверка доступности VK
-            response = requests.get('https://api.vk.com/method/utils.getServerTime',
-                                    timeout=10)
+            # Проверяем доступность VK API
+            response = requests.get(
+                'https://api.vk.com/method/utils.getServerTime',
+                timeout=10
+            )
             if response.status_code == 200:
-                logger.info("✅ Соединение с VK API установлено")
-                return True
+                try:
+                    data = response.json()
+                    if 'response' in data:
+                        logger.info("✅ Соединение с VK API установлено")
+                        return True
+                    else:
+                        logger.warning("⚠️ VK API вернул неожиданный ответ")
+                        return False
+                except json.JSONDecodeError:
+                    logger.warning("⚠️ VK API вернул не JSON ответ")
+                    return False
+            else:
+                logger.warning(f"⚠️ VK API недоступен, статус: {response.status_code}")
+                return False
         except Exception as e:
             logger.warning(f"⚠️ Проблемы с соединением VK API: {e}")
-        return False
+            return False
 
     def _reconnect(self):
         """Переподключение к VK API"""
         logger.info("🔄 Попытка переподключения к VK...")
         time.sleep(self.retry_delay)
         return self._init_session()
+
+    def _safe_longpoll_listen(self):
+        """Безопасное прослушивание LongPoll с обработкой JSON ошибок"""
+        try:
+            for event in self.longpoll.listen():
+                yield event
+        except (json.JSONDecodeError, requests.exceptions.JSONDecodeError) as e:
+            logger.error(f"❌ Ошибка парсинга JSON от VK: {e}")
+            raise ConnectionError("JSON parse error") from e
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Сетевая ошибка VK: {e}")
+            raise ConnectionError("Network error") from e
+        except Exception as e:
+            logger.error(f"❌ Неожиданная ошибка LongPoll: {e}")
+            raise
 
     def get_keyboard(self, keyboard_type="main_menu"):
         """Создание клавиатур для VK"""
@@ -257,7 +298,7 @@ class VKBot:
         self.send_message(user_id, thank_message, self.get_keyboard("main_menu"))
 
     def run(self):
-        """Запуск VK бота с автоматическим переподключением"""
+        """Запуск VK бота с улучшенным переподключением"""
         logger.info("🚀 VK бот запущен, ожидаем сообщения...")
 
         retry_count = 0
@@ -280,6 +321,8 @@ class VKBot:
                     if retry_count < self.max_retries:
                         logger.info(f"🔄 Переподключение через {self.retry_delay} секунд...")
                         time.sleep(self.retry_delay)
+                        if not self._reconnect():
+                            logger.error("❌ Не удалось переподключиться")
                         continue
                     else:
                         break
@@ -288,7 +331,7 @@ class VKBot:
                 retry_count = 0
 
                 # Основной цикл обработки событий
-                for event in self.longpoll.listen():
+                for event in self._safe_longpoll_listen():
                     if not self.running:
                         break
 
@@ -362,9 +405,9 @@ class VKBot:
                         else:
                             self.handle_start(user_id)
 
-            except requests.exceptions.ConnectionError as e:
+            except (ConnectionError, requests.exceptions.RequestException) as e:
                 retry_count += 1
-                logger.error(f"❌ Ошибка соединения VK (попытка {retry_count}/{self.max_retries}): {e}")
+                logger.error(f"❌ Сетевая ошибка VK (попытка {retry_count}/{self.max_retries}): {e}")
                 if retry_count < self.max_retries:
                     logger.info(f"🔄 Переподключение через {self.retry_delay} секунд...")
                     if not self._reconnect():
@@ -375,8 +418,7 @@ class VKBot:
 
             except Exception as e:
                 retry_count += 1
-                logger.error(f"❌ Неожиданная ошибка VK бота (попытка {retry_count}/{self.max_retries}): {e}",
-                             exc_info=True)
+                logger.error(f"❌ Неожиданная ошибка VK бота (попытка {retry_count}/{self.max_retries}): {e}", exc_info=True)
                 if retry_count < self.max_retries:
                     logger.info(f"🔄 Перезапуск через {self.retry_delay} секунд...")
                     time.sleep(self.retry_delay)
